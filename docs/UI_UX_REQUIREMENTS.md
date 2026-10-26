@@ -1,6 +1,7 @@
 # UI/UX Requirements Specification Document: Xeron
 
 **Project:** Xeron — Campus Digital Print Management System  
+**Author & Maintainer:** V S Raveendran (madhav-r7)  
 **Document Version:** 1.0.0  
 **Target Audience:** Product Managers, UI/UX Designers, Frontend Developers, QA Engineers  
 **Status:** Approved for Implementation  

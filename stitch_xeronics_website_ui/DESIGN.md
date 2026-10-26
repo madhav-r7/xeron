@@ -149,6 +149,7 @@ spacing:
 # Xeron — Campus Digital Print Management System
 > Editorial precision, warm linen tactile paper aesthetic, and effortless print workflow.
 
+**Author & Maintainer:** V S Raveendran (madhav-r7)  
 **Theme:** light
 
 Xeron brings the warmth and high craft of an editorial paper studio to the modern university printing experience. Drawing inspiration from Duna's quiet, monochromatic editorial canvas, Xeron utilizes a warm linen background (#F7F7F5), paper-white elevated surfaces (#FFFFFF), deep aubergine-black ink typography (#1B0624), espresso tactile CTA buttons (#160F0C) with 999px full pill curvature, hairline 1px borders (#E5E5E0), and intentional, restrained status indicators (amber for queued, sapphire for printing, emerald for ready-for-pickup).

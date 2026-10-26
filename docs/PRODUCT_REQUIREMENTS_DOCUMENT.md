@@ -1,6 +1,7 @@
 # Product Requirements Document (PRD)
 
 **Product Name:** Xeron — Campus Digital Print Management System  
+**Author & Maintainer:** V S Raveendran (madhav-r7)  
 **Document Version:** 1.0.0  
 **Status:** Approved for Implementation  
 **Last Updated:** October 2026  
