@@ -1,0 +1,668 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { PrintJob, User, QueueHoldStatus } from '../types';
+import { soundManager } from '../utils/audio';
+import { getQueueHoldStatus } from '../services/storage';
+import {
+  Clock,
+  Printer,
+  CheckCircle2,
+  PackageCheck,
+  Search,
+  MapPin,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  Copy,
+  Check,
+  Bell,
+  ExternalLink,
+  Download,
+  QrCode,
+  X,
+  AlertTriangle,
+} from 'lucide-react';
+import { OrderQrCodeCard } from './OrderQrCodeCard';
+
+interface TrackPrintingProps {
+  user: User;
+  jobs: PrintJob[];
+  onRefresh: () => void;
+  onNavigateToUpload: () => void;
+}
+
+export const TrackPrinting: React.FC<TrackPrintingProps> = ({
+  user,
+  jobs,
+  onRefresh,
+  onNavigateToUpload,
+}) => {
+  const [filter, setFilter] = useState<'all' | 'active' | 'ready' | 'completed'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [queueHold, setQueueHold] = useState<QueueHoldStatus>(() => getQueueHoldStatus());
+
+  useEffect(() => {
+    const handleQueueHoldUpdate = (e: any) => {
+      if (e.detail) {
+        setQueueHold(e.detail);
+      } else {
+        setQueueHold(getQueueHoldStatus());
+      }
+    };
+    window.addEventListener('xeron_queue_hold_updated', handleQueueHoldUpdate);
+    window.addEventListener('xeroxic_queue_hold_updated', handleQueueHoldUpdate);
+    window.addEventListener('storage', handleQueueHoldUpdate);
+    return () => {
+      window.removeEventListener('xeron_queue_hold_updated', handleQueueHoldUpdate);
+      window.removeEventListener('xeroxic_queue_hold_updated', handleQueueHoldUpdate);
+      window.removeEventListener('storage', handleQueueHoldUpdate);
+    };
+  }, []);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [readyAlertMsg, setReadyAlertMsg] = useState<string | null>(null);
+  const [qrModalJob, setQrModalJob] = useState<PrintJob | null>(null);
+
+  // Student should see their own jobs
+  const studentJobs = jobs.filter(
+    (j) => j.studentId === user.id || j.studentRoll === user.studentId
+  );
+
+  // Sound chime when operator marks an order as ready
+  const knownReadyRef = useRef<Set<string>>(
+    new Set(studentJobs.filter((j) => j.status === 'ready').map((j) => j.id))
+  );
+
+  useEffect(() => {
+    const currentReady = studentJobs.filter((j) => j.status === 'ready');
+    const newlyReady = currentReady.filter((j) => !knownReadyRef.current.has(j.id));
+
+    if (newlyReady.length > 0) {
+      soundManager.playReadyChime();
+      setReadyAlertMsg(
+        `🎉 Great news! Your order ${newlyReady[0].id} (${newlyReady[0].fileName}) is printed and READY at ${newlyReady[0].pickupCounter}!`
+      );
+      setTimeout(() => setReadyAlertMsg(null), 10000);
+    }
+
+    knownReadyRef.current = new Set(currentReady.map((j) => j.id));
+  }, [studentJobs]);
+
+  const filteredJobs = studentJobs.filter((job) => {
+    const matchesQuery =
+      job.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      job.fileName.toLowerCase().includes(searchQuery.toLowerCase());
+
+    if (!matchesQuery) return false;
+
+    if (filter === 'active') return job.status === 'submitted' || job.status === 'processing';
+    if (filter === 'ready') return job.status === 'ready';
+    if (filter === 'completed') return job.status === 'completed';
+    return true;
+  });
+
+  const handleCopyToken = (id: string) => {
+    navigator.clipboard.writeText(id);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const getStatusBadge = (status: PrintJob['status']) => {
+    switch (status) {
+      case 'submitted':
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-status-queued/10 text-status-queued border border-status-queued/20">
+            <Clock className="w-3.5 h-3.5" />
+            <span>Queued</span>
+          </span>
+        );
+      case 'processing':
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-status-printing/10 text-status-printing border border-status-printing/20">
+            <Printer className="w-3.5 h-3.5 animate-pulse" />
+            <span>Printing in Progress</span>
+          </span>
+        );
+      case 'ready':
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-status-ready/10 text-status-ready border border-status-ready/20">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Ready for Pickup</span>
+          </span>
+        );
+      case 'completed':
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-medium bg-bone text-status-completed border border-outline-variant">
+            <PackageCheck className="w-3.5 h-3.5" />
+            <span>Collected</span>
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const getStepIndex = (status: PrintJob['status']) => {
+    switch (status) {
+      case 'submitted':
+        return 1;
+      case 'processing':
+        return 2;
+      case 'ready':
+        return 3;
+      case 'completed':
+        return 4;
+      default:
+        return 1;
+    }
+  };
+
+  return (
+    <div className="w-full max-w-[1400px] mx-auto py-8 px-4 sm:px-6 lg:px-8 text-[1.03em] text-left space-y-6 transition-colors duration-300">
+      {/* Title & Live Status bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-2 border-b border-bone/60 dark:border-white/10">
+        <div>
+          <h1 className="text-3xl font-bold text-aubergine-ink dark:text-[#fafafa] tracking-tight">
+            Track Print Status
+          </h1>
+          <p className="text-sm text-warm-ash dark:text-[#a1a1aa] mt-1">
+            Real-time status updates from the Central Xeron machine queue
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={onRefresh}
+            className="text-xs bg-paper-white hover:bg-bone text-aubergine-ink border border-outline/30 px-3 py-1.5 rounded-full font-semibold flex items-center space-x-1.5 transition-colors shadow-sm"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-espresso" />
+            <span>Refresh Status</span>
+          </button>
+          <button
+            onClick={onNavigateToUpload}
+            className="text-xs bg-espresso hover:bg-espresso/90 text-paper-white px-3.5 py-1.5 rounded-full font-semibold flex items-center space-x-1.5 transition-colors shadow-sm"
+          >
+            <span>+ New Print Order</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Live Ready Alert Banner */}
+      {readyAlertMsg && (
+        <div className="mb-4 p-4 bg-status-ready/10 text-status-ready border-2 border-status-ready/30 rounded-[16px] text-xs font-semibold flex items-center justify-between shadow animate-bounce">
+          <div className="flex items-center space-x-2.5">
+            <Bell className="w-5 h-5 text-status-ready shrink-0" />
+            <span className="text-sm">{readyAlertMsg}</span>
+          </div>
+          <button
+            onClick={() => setReadyAlertMsg(null)}
+            className="text-xs text-status-ready hover:underline font-bold px-2 py-1"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Quick Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="bg-paper-white ring-1 ring-black/[0.06] p-3.5 rounded-[20px] shadow-card">
+          <div className="text-[11px] font-semibold text-warm-ash uppercase">Total Orders</div>
+          <div className="text-xl font-bold text-aubergine-ink mt-0.5">{studentJobs.length}</div>
+        </div>
+        <div className="bg-paper-white ring-1 ring-black/[0.06] p-3.5 rounded-[20px] shadow-card">
+          <div className="text-[11px] font-semibold text-warm-ash uppercase">In Queue</div>
+          <div className="text-xl font-bold text-status-queued mt-0.5">
+            {studentJobs.filter((j) => j.status === 'submitted').length}
+          </div>
+        </div>
+        <div className="bg-paper-white ring-1 ring-black/[0.06] p-3.5 rounded-[20px] shadow-card">
+          <div className="text-[11px] font-semibold text-warm-ash uppercase">Printing Now</div>
+          <div className="text-xl font-bold text-status-printing mt-0.5">
+            {studentJobs.filter((j) => j.status === 'processing').length}
+          </div>
+        </div>
+        <div className="bg-paper-white ring-1 ring-black/[0.06] p-3.5 rounded-[20px] shadow-card">
+          <div className="text-[11px] font-semibold text-warm-ash uppercase">Ready at Counter</div>
+          <div className="text-xl font-bold text-status-ready mt-0.5">
+            {studentJobs.filter((j) => j.status === 'ready').length}
+          </div>
+        </div>
+      </div>
+
+      {/* Queue Hold Notice */}
+      {queueHold.isHeld && (
+        <div className="mb-4 p-4 rounded-2xl bg-amber-500/10 dark:bg-amber-950/40 border-2 border-amber-500/30 flex items-start gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-sm">
+                Xeron Counter Printing Queue Is Currently On Hold
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-300 uppercase">
+                Technical Hold Active
+              </span>
+            </div>
+            <p className="mt-1">
+              <strong>Reason:</strong> {queueHold.reason || 'Technical issue at counter'}
+              {queueHold.estimatedResume && (
+                <span> • <strong>Expected to resume in:</strong> {queueHold.estimatedResume}</span>
+              )}
+            </p>
+            <p className="text-[11px] text-amber-800/80 dark:text-amber-400/80 mt-0.5">
+              Your active orders remain safely in position and will resume printing automatically once technical maintenance is complete.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Filter and Search Bar */}
+      <div className="bg-paper-white ring-1 ring-black/[0.06] p-3 rounded-[20px] mb-4 shadow-card flex flex-col md:flex-row items-center justify-between gap-3">
+        {/* Filter Tabs */}
+        <div className="flex space-x-1 overflow-x-auto w-full md:w-auto">
+          <button
+            onClick={() => setFilter('all')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filter === 'all'
+                ? 'bg-espresso text-paper-white font-semibold'
+                : 'text-warm-ash hover:bg-bone'
+            }`}
+          >
+            All Orders ({studentJobs.length})
+          </button>
+          <button
+            onClick={() => setFilter('active')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filter === 'active'
+                ? 'bg-espresso text-paper-white font-semibold'
+                : 'text-warm-ash hover:bg-bone'
+            }`}
+          >
+            Active & Printing (
+            {studentJobs.filter((j) => j.status === 'submitted' || j.status === 'processing').length}
+            )
+          </button>
+          <button
+            onClick={() => setFilter('ready')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filter === 'ready'
+                ? 'bg-status-ready text-paper-white font-semibold'
+                : 'text-warm-ash hover:bg-bone'
+            }`}
+          >
+            Ready for Pickup ({studentJobs.filter((j) => j.status === 'ready').length})
+          </button>
+          <button
+            onClick={() => setFilter('completed')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filter === 'completed'
+                ? 'bg-espresso text-paper-white font-semibold'
+                : 'text-warm-ash hover:bg-bone'
+            }`}
+          >
+            Completed ({studentJobs.filter((j) => j.status === 'completed').length})
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="relative w-full md:w-64">
+          <Search className="w-3.5 h-3.5 text-stone absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by Token ID or File..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 text-xs border border-outline/30 rounded-full focus:ring-2 focus:ring-espresso focus:outline-none"
+          />
+        </div>
+      </div>
+
+      {/* Orders List */}
+      {filteredJobs.length === 0 ? (
+        <div className="bg-paper-white ring-1 ring-black/[0.06] rounded-[20px] p-12 text-center shadow-card">
+          <FileText className="w-10 h-10 text-stone mx-auto mb-3" />
+          <h3 className="text-sm font-semibold text-aubergine-ink">No print jobs found</h3>
+          <p className="text-xs text-warm-ash mt-1 mb-4">
+            {searchQuery
+              ? 'No print orders match your search query.'
+              : 'You have not submitted any assignments in this category.'}
+          </p>
+          <button
+            onClick={onNavigateToUpload}
+            className="text-xs bg-espresso hover:bg-espresso/90 text-paper-white font-semibold px-4 py-2 rounded-full transition-colors shadow-sm"
+          >
+            Upload Assignment Now
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredJobs.map((job) => {
+            const currentStep = getStepIndex(job.status);
+            const isExpanded = expandedJobId === job.id;
+
+            return (
+              <div
+                key={job.id}
+                className="bg-paper-white ring-1 ring-black/[0.06] rounded-[20px] shadow-card hover:shadow-elevated transition-all"
+              >
+                {/* Job Top Row Header */}
+                <div className="p-4 sm:p-5 border-b border-bone">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-10 h-10 rounded-[12px] bg-linen border border-bone flex items-center justify-center text-espresso shrink-0">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-semibold text-aubergine-ink">
+                            {job.fileName}
+                          </span>
+                          {job.isUrgent && (
+                            <span className="text-[10px] bg-status-queued/10 text-status-queued font-semibold px-1.5 py-0.5 rounded-full border border-status-queued/20">
+                              Express
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-warm-ash mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="font-mono font-semibold text-espresso">{job.id}</span>
+                          {job.assignedPrinterId && (
+                            <>
+                              <span>•</span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-bone dark:bg-white/10 text-espresso dark:text-gray-200">
+                                Machine: {job.assignedPrinterId}
+                              </span>
+                            </>
+                          )}
+                          <span>•</span>
+                          <span>{job.pageCount} pages × {job.copies} set(s)</span>
+                          <span>•</span>
+                          <span className="capitalize">{job.colorMode === 'color' ? 'Full Color' : 'B&W'}</span>
+                          <span>•</span>
+                          <span>{job.sides === 'double' ? 'Double Sided' : 'Single Sided'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-3 justify-between sm:justify-end">
+                      {getStatusBadge(job.status)}
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-aubergine-ink">₹{job.cost}.00</div>
+                        <div className="text-[11px] text-stone">
+                          {new Date(job.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Customer Delay Alert Banner */}
+                  {job.delayNotice && (
+                    <div className="mt-4 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex items-start gap-3">
+                      <div className="p-1.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5">
+                        <AlertTriangle className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-xs">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-bold text-amber-950 dark:text-amber-200">
+                            Printer Availability Notice
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200">
+                            {typeof job.delayNotice === 'object' && job.delayNotice.revisedEta
+                              ? job.delayNotice.revisedEta
+                              : 'Technician Attending'}
+                          </span>
+                        </div>
+                        <p className="text-amber-900/90 dark:text-amber-300 mt-1 leading-relaxed">
+                          {typeof job.delayNotice === 'object' ? job.delayNotice.reason : job.delayNotice}
+                        </p>
+                        <div className="text-[11px] text-amber-800/80 dark:text-amber-400/80 mt-1 flex items-center gap-2">
+                          <span>Original ETA: {typeof job.delayNotice === 'object' ? (job.delayNotice.originalEta || job.estimatedPickupTime) : job.estimatedPickupTime}</span>
+                          <span>•</span>
+                          <span>Shop staff is monitoring counter turnaround</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4-Step Progress Tracker */}
+                  <div className="mt-6 pt-4 border-t border-bone">
+                    <div className="relative">
+                      {/* Connecting line */}
+                      <div className="absolute top-3.5 left-4 right-4 h-1 bg-bone -z-0">
+                        <div
+                          className="h-full bg-espresso transition-all duration-500"
+                          style={{
+                            width:
+                              currentStep === 1
+                                ? '15%'
+                                : currentStep === 2
+                                ? '50%'
+                                : currentStep === 3
+                                ? '85%'
+                                : '100%',
+                          }}
+                        />
+                      </div>
+
+                      {/* 4 Steps */}
+                      <div className="grid grid-cols-4 relative z-10 text-center">
+                        {/* Step 1: Queued */}
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
+                              currentStep >= 1
+                                ? 'bg-espresso text-paper-white ring-4 ring-bone'
+                                : 'bg-bone text-stone'
+                            }`}
+                          >
+                            <Clock className="w-4 h-4" />
+                          </div>
+                          <div className="text-[11px] font-semibold text-aubergine-ink mt-1.5">
+                            Queued
+                          </div>
+                          <div className="text-[10px] text-warm-ash hidden sm:block">
+                            In queue
+                          </div>
+                        </div>
+
+                        {/* Step 2: Printing */}
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
+                              currentStep >= 2
+                                ? 'bg-status-printing text-paper-white ring-4 ring-status-printing/10'
+                                : 'bg-bone text-stone'
+                            }`}
+                          >
+                            <Printer className="w-4 h-4" />
+                          </div>
+                          <div className="text-[11px] font-semibold text-aubergine-ink mt-1.5">
+                            Printing
+                          </div>
+                          <div className="text-[10px] text-warm-ash hidden sm:block">
+                            Printing your pages
+                          </div>
+                        </div>
+
+                        {/* Step 3: Ready */}
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
+                              currentStep >= 3
+                                ? 'bg-status-ready text-paper-white ring-4 ring-status-ready/10'
+                                : 'bg-bone text-stone'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div className="text-[11px] font-semibold text-aubergine-ink mt-1.5">
+                            Ready for Pickup
+                          </div>
+                          <div className="text-[10px] text-warm-ash hidden sm:block">
+                            At counter
+                          </div>
+                        </div>
+
+                        {/* Step 4: Completed */}
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
+                              currentStep >= 4
+                                ? 'bg-status-completed text-paper-white ring-4 ring-bone'
+                                : 'bg-bone text-stone'
+                            }`}
+                          >
+                            <PackageCheck className="w-4 h-4" />
+                          </div>
+                          <div className="text-[11px] font-semibold text-aubergine-ink mt-1.5">
+                            Completed
+                          </div>
+                          <div className="text-[10px] text-warm-ash hidden sm:block">
+                            Collected
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Job Bottom Info bar */}
+                <div className="px-4 py-2.5 bg-linen rounded-b-[20px] flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center space-x-3 text-warm-ash">
+                    <div className="flex items-center space-x-1">
+                      <MapPin className="w-3.5 h-3.5 text-espresso" />
+                      <span className="font-medium text-aubergine-ink">{job.pickupCounter}</span>
+                    </div>
+                    <span>•</span>
+                    <div className="flex items-center space-x-1">
+                      <Clock className="w-3.5 h-3.5 text-status-ready" />
+                      <span>ETA: <strong className="text-aubergine-ink">{job.estimatedPickupTime}</strong></span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setQrModalJob(job)}
+                      className="text-xs bg-espresso hover:bg-espresso/90 text-paper-white dark:bg-white dark:text-[#0c0d10] font-semibold px-2.5 py-1 rounded-full flex items-center space-x-1 shadow-sm transition-opacity"
+                      title="Show collection QR pass on phone"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Collection QR</span>
+                    </button>
+                    <span>|</span>
+                    <button
+                      onClick={() => handleCopyToken(job.id)}
+                      className="text-xs text-espresso dark:text-[#fafafa] hover:text-espresso/80 font-medium flex items-center space-x-1"
+                    >
+                      {copiedId === job.id ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-status-ready" />
+                          <span className="text-status-ready">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy Token ID</span>
+                        </>
+                      )}
+                    </button>
+                    <span>|</span>
+                    <button
+                      onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
+                      className="text-xs text-warm-ash hover:text-aubergine-ink dark:hover:text-white font-medium flex items-center space-x-1"
+                    >
+                      <span>{isExpanded ? 'Hide Details' : 'View Specifications & Timeline'}</span>
+                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expanded Details Drawer */}
+                {isExpanded && (
+                  <div className="p-4 sm:p-5 bg-paper-white dark:bg-[#16181d] border-t border-bone dark:border-white/10 rounded-b-[20px] text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="md:col-span-2 space-y-4">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-2.5 bg-linen dark:bg-[#20232a] border border-bone dark:border-white/10 rounded-[12px]">
+                            <span className="text-warm-ash dark:text-[#a1a1aa] block text-[11px]">Paper & Media</span>
+                            <span className="font-semibold text-aubergine-ink dark:text-white capitalize">
+                              {job.paperSize} ({job.paperType === 'photo' ? 'Photo Paper' : 'Plain Paper'})
+                            </span>
+                          </div>
+                          <div className="p-2.5 bg-linen dark:bg-[#20232a] border border-bone dark:border-white/10 rounded-[12px]">
+                            <span className="text-warm-ash dark:text-[#a1a1aa] block text-[11px]">Payment Method</span>
+                            <span className="font-semibold text-aubergine-ink dark:text-white capitalize">
+                              {job.paymentMethod === 'upi' ? 'UPI Online' : 'Pay at Counter'}
+                            </span>
+                          </div>
+                          <div className="p-2.5 bg-linen dark:bg-[#20232a] border border-bone dark:border-white/10 rounded-[12px]">
+                            <span className="text-warm-ash dark:text-[#a1a1aa] block text-[11px]">Student Roll No.</span>
+                            <span className="font-semibold text-aubergine-ink dark:text-white">{job.studentRoll}</span>
+                          </div>
+                          <div className="p-2.5 bg-linen dark:bg-[#20232a] border border-bone dark:border-white/10 rounded-[12px]">
+                            <span className="text-warm-ash dark:text-[#a1a1aa] block text-[11px]">File Size & Format</span>
+                            <span className="font-semibold text-aubergine-ink dark:text-white">{job.fileSize} (PDF)</span>
+                          </div>
+                        </div>
+
+                        {job.instructions && (
+                          <div className="p-3 bg-bone/40 dark:bg-white/5 border border-bone dark:border-white/10 rounded-[12px]">
+                            <span className="font-semibold text-espresso dark:text-white block mb-0.5">Your Instructions to Operator:</span>
+                            <span className="text-aubergine-ink dark:text-[#a1a1aa]">{job.instructions}</span>
+                          </div>
+                        )}
+
+                        {/* Timeline History */}
+                        <div>
+                          <div className="font-semibold text-aubergine-ink dark:text-white mb-2">Order Activity Log</div>
+                          <div className="space-y-2 border-l-2 border-espresso dark:border-white/40 pl-3 ml-1">
+                            {job.statusHistory.map((h, i) => (
+                              <div key={i} className="text-xs">
+                                <div className="flex items-center space-x-2">
+                                  <span className="font-semibold text-aubergine-ink dark:text-white capitalize">{h.status}</span>
+                                  <span className="text-[11px] text-stone dark:text-[#a1a1aa]">
+                                    {new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </span>
+                                </div>
+                                {h.note && <div className="text-[11px] text-warm-ash dark:text-[#a1a1aa]">{h.note}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Embedded QR Code Card */}
+                      <div className="md:col-span-1 flex flex-col items-center justify-center">
+                        <OrderQrCodeCard job={job} size="sm" showDetails={false} className="w-full max-w-[260px]" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* MODAL: Full Screen / Dedicated QR Pass for Display on Phone at Counter */}
+      {qrModalJob && (
+        <div
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setQrModalJob(null)}
+        >
+          <div
+            className="bg-paper-white dark:bg-[#16181d] ring-1 ring-black/[0.08] dark:ring-white/10 rounded-[26px] p-6 max-w-sm w-full shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setQrModalJob(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-warm-ash hover:text-aubergine-ink dark:hover:text-white hover:bg-bone dark:hover:bg-white/10 transition-colors"
+              title="Close pass"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <OrderQrCodeCard job={qrModalJob} size="lg" showDetails={true} className="border-0 shadow-none p-0" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
